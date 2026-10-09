@@ -1,0 +1,32 @@
+# ===== 敏感信息（绝不入库）=====
+# 浏览器持久化配置：包含通过验证后的 TikTok cookie 会话
+.browser-profile/
+.browser-profile-cdp/
+.browser-profile-fresh/
+
+# ===== 运行产物（体积大、可重新生成）=====
+# 探针/抓取原始产物：截图、页面HTML、原始响应JSON
+probe/
+# 生成的报告（同事各自生成）
+report/*.xlsx
+# 抓取数据存档（按商品ID，可重新抓）
+probe/us_cdp/reviews_*.json
+
+# ===== 运行时状态 =====
+.aios/context-db/
+.contextdb-enable
+
+# ===== Python =====
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ===== 其他 =====
+~$*.xlsx        # Excel 打开时的锁文件
+*.tmp
+*.log
+node_modules/
+
+# ===== 抓取数据存档（可再生）=====
+output/
