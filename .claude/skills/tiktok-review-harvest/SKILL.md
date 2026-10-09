@@ -13,14 +13,17 @@ description: >-
 
 ## 安装与运行位置
 
-首次安装参照 [INSTALL.md](INSTALL.md)。需要 Python 3.10+、Edge/Chrome、
+用户通过宿主的 GitHub skill 安装功能安装后直接调用；无需额外运行安装器。
+首次调用按 [INSTALL.md](INSTALL.md) 由 agent 准备隔离 Python 环境与依赖。
+需要 Python 3.10+、Edge/Chrome、
 playwright 和 openpyxl。Windows 为主要支持平台；macOS/Linux 提供浏览器探测，
 需要图形桌面，并应在目标机器运行预检。
 
 执行前定位**当前已安装的本 skill 目录**，不要假设项目根目录就是 skill 根目录。
 优先用本 skill 下的隔离环境：
 Windows 为 .venv/Scripts/python.exe，macOS/Linux 为 .venv/bin/python；
-没有隔离环境时使用已安装 requirements.txt 的 Python。
+没有隔离环境时由 agent 创建 .venv 并安装 requirements.txt；目录只读时在用户工作目录创建隔离环境。
+已有依赖可正常导入时复用，不重复安装。
 下文 <python>、<skill> 和 <工作目录> 都需替换为实际路径，带空格的路径要加引号。
 在用户指定的可写工作目录执行，所有脚本使用绝对路径：
 产物写到工作目录；浏览器 cookie 默认保存在当前用户的数据目录，不写入 skill 安装目录。
@@ -31,7 +34,8 @@ Windows 为 .venv/Scripts/python.exe，macOS/Linux 为 .venv/bin/python；
 
        <python> "<skill>/scripts/tiktok_reviews.py" check "<商品URL>"
 
-   缺依赖时按提示安装；预检失败必须先处理，不得当作通过。
+   缺 Python 库时由 agent 在隔离环境补齐后重跑预检，不要求用户手工运行安装器。
+   缺 Python、浏览器或网络条件时说明具体缺项；预检失败必须先处理，不得当作通过。
    确认 TT_PROXY 为本机 HTTP/mixed 代理端口或 direct。
    浏览器启动前检查配置出口；已有 CDP 会话时检查浏览器实际出口。
 

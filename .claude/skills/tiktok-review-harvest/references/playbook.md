@@ -71,4 +71,4 @@ CLASH_API 与 CLASH_SECRET 由目标机器配置；无控制器时可手动切�
     python -X utf8 -m unittest discover -s tests -v
 
 测试使用模拟网页、临时目录和本地 HTTP 控制器，不访问 TikTok 或切换真实代理。
-全新机器仍应按 INSTALL.md 完成安装与目标商品预检。
+GitHub 安装后的首次调用由 agent 按 INSTALL.md 准备依赖并完成目标商品预检。

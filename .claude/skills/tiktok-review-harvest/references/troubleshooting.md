@@ -5,9 +5,8 @@
 ## 找不到脚本或依赖
 
 使用已安装 skill 的绝对脚本路径，优先使用 skill 的 .venv 中的 Python。
-从分发包解压目录运行 install.py --host codex --update --deps 可补齐隔离环境；
-Claude 用 --host claude。没有 Python 时先装 Python 3.10+。
-安装位置、命令和配置参照 [../INSTALL.md](../INSTALL.md)。
+缺依赖时由 agent 按 [../INSTALL.md](../INSTALL.md) 创建或复用隔离环境，安装 requirements.txt 后继续。
+没有 Python 时告知用户需安装 Python 3.10+。
 
 ## Edge/Chrome 未找到
 

@@ -19,7 +19,7 @@ NAME = 'tiktok-review-harvest'
 
 def distribution_files():
     # Explicitly exclude browser profiles, output, credentials and virtual environments.
-    files = [ROOT / name for name in ('SKILL.md', 'requirements.txt', 'INSTALL.md')]
+    files = [ROOT / name for name in ('SKILL.md', 'requirements.txt', 'INSTALL.md', 'README.md')]
     files += sorted((ROOT / 'scripts').glob('*.py'))
     files += sorted((ROOT / 'references').glob('*.md'))
     return files
