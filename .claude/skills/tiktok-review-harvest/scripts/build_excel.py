@@ -5,7 +5,7 @@ Usage: python build_excel.py [reviews_json] [output_xlsx]
 import json
 import re
 import sys
-import time
+from datetime import datetime, timezone
 from collections import Counter
 from pathlib import Path
 
@@ -16,10 +16,14 @@ from openpyxl.chart.series import DataPoint
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, OSError):
+    pass
+
 SRC = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("./output/reviews.json")
-OUT = Path("./report")
-OUT.mkdir(parents=True, exist_ok=True)
-XLSX = Path(sys.argv[2]) if len(sys.argv) > 2 else OUT / "TikTok评论分析报告.xlsx"
+XLSX = (Path(sys.argv[2]) if len(sys.argv) > 2 else Path('./report/TikTok评论分析报告.xlsx')).expanduser()
+XLSX.parent.mkdir(parents=True, exist_ok=True)
 
 # palette (star polarity ramp + single hue for neutral series)
 STAR_COLORS = {"5": "2E7D32", "4": "7CB342", "3": "F9A825", "2": "EF6C00", "1": "C62828"}
@@ -32,17 +36,39 @@ BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 data = json.loads(SRC.read_text(encoding="utf-8"))
 revs = data["reviews"]
+for r in revs:
+    r['review_id'] = str(r.get('review_id', ''))
+    try:
+        r['review_rating'] = int(r['review_rating'])
+        if not 1 <= r['review_rating'] <= 5:
+            raise ValueError('rating outside 1..5')
+    except (KeyError, ValueError, TypeError):
+        print('FATAL: invalid or missing review_rating; inspect the input schema', file=sys.stderr)
+        sys.exit(2)
+
+
+def review_date(value, fmt='%Y-%m-%d'):
+    try:
+        return datetime.fromtimestamp(int(value) / 1000, timezone.utc).strftime(fmt)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ''
+
+
+def image_urls(review):
+    # Different API templates can return strings or objects.
+    images = review.get('review_images') or []
+    if not isinstance(images, list):
+        return []
+    return [url for image in images
+            if isinstance(url := (image if isinstance(image, str) else image.get('url') if isinstance(image, dict) else None), str)]
 
 
 def ts_month(ms):
-    try:
-        return time.strftime("%Y-%m", time.localtime(int(ms) / 1000))
-    except Exception:
-        return None
+    return review_date(ms, '%Y-%m') or None
 
 
 def norm_sku(s):
-    if not s:
+    if not isinstance(s, str) or not s:
         return "未标注"
     key = re.sub(r"\s+", " ", s).strip().lower()
     fixes = {"coffee brown, one-size": "Coffee Brown, One-size",
@@ -90,7 +116,7 @@ wouldnt wouldnt didnt dont don't doesnt doesn't isnt isn't wasnt wasn't cant can
 """.split())
 words = Counter()
 for r in neg:
-    for w in re.findall(r"[a-z']{3,}", (r.get("review_text") or "").lower()):
+    for w in re.findall(r"[a-z']{3,}", str(r.get("review_text") or "").lower()):
         if w not in STOP:
             words[w] += 1
 neg_top = words.most_common(15)
@@ -124,11 +150,18 @@ ws.title = "总览"
 ws.sheet_view.showGridLines = False
 ws["A1"] = "TikTok Shop 商品评论分析报告"
 ws["A1"].font = Font(size=15, bold=True, color=INK)
-ws["A2"] = (f"商品: {(revs[0]['product_name'][:60] if revs else 'N/A')}  |  商品ID: {data['product_id']}  |  "
-            f"抓取时间: {data['harvested_at']}  |  样本: {n}/{data['total_reviews_claimed']} 条")
+ws["A2"] = (f"商品: {str(revs[0].get('product_name') or '未提供')[:60]}  |  商品ID: {data.get('product_id', '未知')}  |  "
+            f"抓取时间: {data.get('harvested_at', '未知')}  |  样本: {n}/{data.get('total_reviews_claimed', '未知')} 条")
 ws["A2"].font = Font(size=9, color=MUTED)
+status = data.get('status', 'unknown')
+ws['A8'] = {'complete': '完整性：已按平台总数和各星级数量核对', 'partial': '警告：部分数据，以下统计仅代表已抓取样本',
+            'unknown': '警告：完整性未验证，以下统计仅代表已抓取样本'}.get(status, '警告：完整性未验证')
+ws['A8'].font = Font(bold=True, color='2E7D32' if status == 'complete' else 'C62828')
+ws['A9'] = '评论日期统一使用 UTC。差评词频仅分析英文文本。'
+if data.get('stop_reason'):
+    ws['A10'] = str(data['stop_reason'])
 
-kpi(ws, 4, 1, "评论总数", n, f"平台显示 {data['total_reviews_claimed']}")
+kpi(ws, 4, 1, "已抓取评论", n, f"平台显示 {data.get('total_reviews_claimed', '未知')}")
 kpi(ws, 4, 3, "综合评分", f"{avg_overall}★", "满分 5 星")
 kpi(ws, 4, 5, "5星占比", f"{star_cnt[5]/n:.0%}", f"{star_cnt[5]} 条")
 kpi(ws, 4, 7, "差评(1-2星)", len(neg), f"差评率 {len(neg)/n:.1%}")
@@ -152,8 +185,8 @@ for i, s in enumerate([5, 4, 3, 2, 1]):
 pie = PieChart()
 pie.title = "星级占比"
 pie.height, pie.width = 8.2, 13
-pie.add_data(Reference(ws, min_col=2, min_row=13, max_row=19), titles_from_data=True)
-pie.set_categories(Reference(ws, min_col=1, min_row=14, max_row=19))
+pie.add_data(Reference(ws, min_col=2, min_row=13, max_row=18), titles_from_data=True)
+pie.set_categories(Reference(ws, min_col=1, min_row=14, max_row=18))
 series = pie.series[0]
 for i, s in enumerate(["5", "4", "3", "2", "1"]):
     dp = DataPoint(idx=i)
@@ -169,8 +202,8 @@ bar = BarChart()
 bar.type, bar.style = "col", 10
 bar.title = "各星级评论数"
 bar.height, bar.width = 8.2, 13
-bar.add_data(Reference(ws, min_col=2, min_row=13, max_row=19), titles_from_data=True)
-bar.set_categories(Reference(ws, min_col=1, min_row=14, max_row=19))
+bar.add_data(Reference(ws, min_col=2, min_row=13, max_row=18), titles_from_data=True)
+bar.set_categories(Reference(ws, min_col=1, min_row=14, max_row=18))
 bar.series[0].graphicalProperties.solidFill = ACCENT
 bar.dataLabels = DataLabelList()
 bar.dataLabels.showVal = True
@@ -221,7 +254,7 @@ s.graphicalProperties.line.solidFill = "2E7D32"
 s.graphicalProperties.line.width = 28000
 s.marker.symbol = "circle"
 s.marker.size = 7
-line.y_axis.scaling.min = 3.5
+line.y_axis.scaling.min = 1
 line.y_axis.scaling.max = 5
 line.dataLabels = DataLabelList()
 line.dataLabels.showVal = True
@@ -270,7 +303,7 @@ skurate.dataLabels = DataLabelList()
 skurate.dataLabels.showVal = True
 skurate.legend = None
 skurate.y_axis.majorGridlines = None
-skurate.x_axis.scaling.min = 3
+skurate.x_axis.scaling.min = 1
 skurate.x_axis.scaling.max = 5
 ws3.add_chart(skurate, "F24")
 ws3.column_dimensions["A"].width = 42
@@ -312,13 +345,13 @@ ws4.append([])
 for i, h in enumerate(["星级", "日期", "SKU", "评论内容", "图片链接"], start=1):
     ws4.cell(row=start, column=i, value=h)
 style_header(ws4, start, 5)
-for j, r in enumerate(sorted(neg, key=lambda x: x["review_time"], reverse=True), start=1):
-    d = time.strftime("%Y-%m-%d", time.localtime(int(r["review_time"]) / 1000))
+for j, r in enumerate(sorted(neg, key=lambda x: str(x.get('review_time') or ''), reverse=True), start=1):
+    d = review_date(r.get('review_time'))
     ws4.cell(row=start + j, column=1, value=r["review_rating"])
     ws4.cell(row=start + j, column=2, value=d)
     ws4.cell(row=start + j, column=3, value=norm_sku(r.get("sku_specification")))
-    ws4.cell(row=start + j, column=4, value=r.get("review_text"))
-    ws4.cell(row=start + j, column=5, value=" | ".join(r.get("review_images") or []))
+    ws4.cell(row=start + j, column=4, value=str(r.get("review_text") or ''))
+    ws4.cell(row=start + j, column=5, value=" | ".join(image_urls(r)))
 ws4.column_dimensions["A"].width = 10
 ws4.column_dimensions["B"].width = 12
 ws4.column_dimensions["C"].width = 22
@@ -331,23 +364,33 @@ headers = ["评论ID", "星级", "日期", "用户名", "国家", "真实购买"
            "SKU规格", "评论内容", "图片数", "图片链接"]
 ws5.append(headers)
 style_header(ws5, 1, len(headers))
-for r in sorted(revs, key=lambda x: int(x["review_time"]), reverse=True):
-    imgs = r.get("review_images") or []
+for r in sorted(revs, key=lambda x: str(x.get('review_time') or ''), reverse=True):
+    imgs = image_urls(r)
     ws5.append([
         r["review_id"], r["review_rating"],
-        time.strftime("%Y-%m-%d", time.localtime(int(r["review_time"]) / 1000)),
+        review_date(r.get("review_time")),
         r.get("reviewer_name"), r.get("review_country"),
         "是" if r.get("is_verified_purchase") else "否",
         "是" if r.get("is_incentivized_review") else "否",
-        norm_sku(r.get("sku_specification")), r.get("review_text"),
-        len(imgs), " | ".join(imgs[:3])])
+        norm_sku(r.get("sku_specification")), str(r.get("review_text") or ''),
+        len(imgs), " | ".join(imgs)])
 widths = [20, 7, 12, 14, 8, 9, 9, 24, 60, 7, 40]
 for i, w in enumerate(widths, start=1):
     ws5.column_dimensions[get_column_letter(i)].width = w
 ws5.freeze_panes = "A2"
 ws5.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{n + 1}"
 
-wb.save(XLSX)
+# All output is values, so externally supplied strings must never become formulas.
+for sheet in wb:
+    for row in sheet.iter_rows():
+        for cell in row:
+            if cell.data_type == 'f':
+                cell.data_type = 's'
+try:
+    wb.save(XLSX)
+except PermissionError:
+    print(f'FATAL: cannot write {XLSX}; close the workbook in Excel or choose another --xlsx path', file=sys.stderr)
+    sys.exit(2)
 print("saved:", XLSX)
 print(f"sheets: {[s.title for s in wb.worksheets]}")
 print(f"rows detail: {n}, months: {len(mkeys)}, skus: {len(top_skus)}, neg: {len(neg)}")

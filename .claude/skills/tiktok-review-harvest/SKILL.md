@@ -1,62 +1,81 @@
 ---
 name: tiktok-review-harvest
-description: 抓取 TikTok Shop 商品全部评论（星级/文字/图片/翻页）并生成带图表的 Excel 分析报告。当用户给出 TikTok Shop 商品链接/PDP 链接并要求抓评论、分析评论、出评论报告、差评分析时使用。Trigger: TikTok 评论、TikTok Shop reviews、商品评论抓取、评论分析报告。
+description: >-
+  抓取 TikTok Shop 商品公开评论并生成 Excel 样本分析报告。
+  用户给出完整 shop.tiktok.com 区域商品链接或商品 ID，要求抓评论、差评分析或评论报告时使用。
+  不用于达人邀约、账号分析、店铺管理或其他网站评论。
 ---
 
-# TikTok Shop 评论抓取 + Excel 报告
+# TikTok Shop 评论抓取与报告
 
-一套已验证的完整流程：出口 IP 与站点区域一致 → 真实 Edge(CDP 附加) → 明文评论 API 重放 → Excel 报告。
-本 skill 根目录下：`scripts/`（可执行脚本）、`references/`（方法论与故障手册）、`requirements.txt`。
-**以下所有路径均相对于本 skill 的根目录。**
+通过本机 Edge/Chrome 的 CDP 会话读取公开评论；验证码由用户手动完成。
+平台接口、风控和评论数量会变化，必须按脚本返回的完整性状态描述结果。
 
-## 0. 依赖（首次使用前，一次性）
+## 安装与运行位置
 
-```bash
-pip install -r requirements.txt
-```
+首次安装参照 [INSTALL.md](INSTALL.md)。需要 Python 3.10+、Edge/Chrome、
+playwright 和 openpyxl。Windows 为主要支持平台；macOS/Linux 提供浏览器探测，
+需要图形桌面，并应在目标机器运行预检。
 
-## 使用步骤（按顺序，不要跳）
+执行前定位**当前已安装的本 skill 目录**，不要假设项目根目录就是 skill 根目录。
+优先用本 skill 下的隔离环境：
+Windows 为 .venv/Scripts/python.exe，macOS/Linux 为 .venv/bin/python；
+没有隔离环境时使用已安装 requirements.txt 的 Python。
+下文 <python>、<skill> 和 <工作目录> 都需替换为实际路径，带空格的路径要加引号。
+在用户指定的可写工作目录执行，所有脚本使用绝对路径：
+产物写到工作目录；浏览器 cookie 默认保存在当前用户的数据目录，不写入 skill 安装目录。
 
-### 1. 环境预检
+## 流程
 
-```bash
-python scripts/tiktok_reviews.py check
-```
+1. 预检，尽量带上目标链接：
 
-自动检查：代理端口（探测 7897/7890/10809 等，可用 env `TT_PROXY` 指定）、出口 IP 国家、Edge 路径、Python 依赖、CDP 9333 端口。缺什么按提示补。
+       <python> "<skill>/scripts/tiktok_reviews.py" check "<商品URL>"
 
-### 2. 出口 IP 必须与站点区域一致
+   缺依赖时按提示安装；预检失败必须先处理，不得当作通过。
+   确认 TT_PROXY 为本机 HTTP/mixed 代理端口或 direct。
+   浏览器启动前检查配置出口；已有 CDP 会话时检查浏览器实际出口。
 
-美国站(/us/)必须美国出口 IP，否则被重定向/风控。住宅（家宽）节点风控最宽松。
-若用户跑 Clash 系代理（端口探测失败时先确认用户用的是哪种代理）：
+2. 出口国家须与 URL 中的站点区域一致。
+   自动探测常见本地 HTTP 端口；非标准端口用 TT_PROXY。
+   不依赖 Clash，其他代理客户端可手动切换线路。
+   可选的 Clash/mihomo 控制器操作见 INSTALL.md：CLASH_API/CLASH_SECRET。
+   切换节点会影响用户其他应用，必须获得明确授权；记录原节点便于恢复。
+   切换后关闭本 skill 的浏览器，再运行，以应用新代理。
 
-```bash
-python scripts/clash_pipe.py list     # 列出分组/节点（自动找 US 候选）
-python scripts/clash_pipe.py switch "GLOBAL" "<节点名>"
-```
+3. 抓取和报告：
 
-⚠️ 切的是用户全局代理：**动手前告知用户，完成后询问是否切回**。密钥不同用 env `CLASH_SECRET`。
+       <python> "<skill>/scripts/tiktok_reviews.py" all "<商品URL或ID>" --out "<工作目录>/output"
 
-### 3. 浏览器：真实 Edge + CDP 附加（脚本会自动拉起）
+   仅 ID 默认美国站；其他区域须加 --region th 等参数。
+   支持完整 https://shop.tiktok.com/<region>/pdp/.../<id> 链接，不支持短链。
+   抓取器启动独立用户配置的真实浏览器，然后通过 CDP 附加；不使用日常浏览器配置。
+   若出现 Security Check，告知用户手动完成，最多等 5 分钟；超时停止。
+   不自动处理验证码、不绕登录或付费墙。
+   不对同一浏览器/商品并行运行多个抓取器。
 
-`harvest`/`all` 子命令发现 CDP 9333 不在线时会自动启动真实 Edge（需系统装有 Edge，路径自动探测，可用 env `TT_EDGE_PATH` 指定）。
+4. 根据返回码、JSON 的 status 和报表警告描述结果：
+   - 0：正常完成；抓取命令已核对平台总数和各星级数量，单独 report 命令仅表示报表生成成功。
+   - 2：配置、依赖、输入、浏览器或报告错误。
+   - 3：没有评论数据，不生成空报表；可能是真实零评论或抓取失败，需结合 stop_reason 判断。
+   - 4：部分数据或完整性未验证；有数据时仍生成带警告的报表。
+   - 130：用户中断。
 
-硬性规则：
-- **禁止**用 Playwright 直接 launch 浏览器（必触发滑块），只能 CDP 附加
-- **首次出现 Security Check 滑块：让用户手动拖一次**，脚本等待最多 5 分钟；通过后 cookie 存在 `<工作目录>/.browser-profile-cdp`，之后不再弹
+   连续两次 code=100000，或 HTTP 401/403/429 时停止全部星级请求。
+   保留部分 JSON，等待后再由用户决定是否重试；不要承诺固定时间自动解封。
+   已有 JSON/默认报表保留，新运行加时间后缀。显式 --xlsx 路径可覆盖该文件。
 
-### 4. 一键抓取 + 报告
+## 输出与配置
 
-```bash
-python scripts/tiktok_reviews.py all "<商品URL或商品ID>" --out ./output
-```
+JSON 写入 --out，Excel 默认写入 <工作目录>/report：
+5 个工作表、7 个原生图表，包含星级、月度趋势、SKU、英文差评词频和评论明细。
+图片输出为 URL，不下载或嵌入图片；日期统一 UTC；未完整抓取的数据只能称为样本分析。
 
-子命令：`check` / `harvest <url|id>` / `report <json> [--xlsx 路径]` / `all <url|id>`。
-产物：`<out>/reviews_<商品ID>.json` + `report/TikTok评论分析报告_<商品ID>.xlsx`（5 工作表 + 7 原生图表：总览KPI、星级饼图、月度趋势、SKU分析、差评分析、全量明细带筛选）。
+可用子命令：check / harvest / report <JSON> [--xlsx <路径>] / all。
+TT_BROWSER_PATH（兼容 TT_EDGE_PATH）、TT_CDP_PORT、TT_PROFILE_DIR、TT_PROXY
+的配置与安装示例见 [INSTALL.md](INSTALL.md)。
 
-## 行为约定（写给执行 agent）
+只有用户已手动核实浏览器出口、且 IP 查询服务不可用时才能使用 --skip-ip-check；
+仍会验证商品页面的区域与 ID，不能绕过验证码。
 
-- 接口被限流（`code=100000`）时脚本会自动熔断并提示：**等 10-60 分钟自动解封**，期间不要反复重试加剧封锁；可用 `harvest` 单次探测（见 references/troubleshooting.md 的判别方法）
-- 抓取器已内置防限流（星级分区 + 退避重试），不要对同一商品并行开多个抓取
-- 只抓公开评论数据，1.5s/请求限速；不绕登录/付费墙
-- 深入原理见 `references/playbook.md`，疑难杂症见 `references/troubleshooting.md`
+遇到问题读 [references/troubleshooting.md](references/troubleshooting.md)，
+接口实现和数量核对读 [references/playbook.md](references/playbook.md)。

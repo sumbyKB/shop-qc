@@ -1,82 +1,68 @@
-"""Talk to mihomo REST API over named pipe: list proxy groups & US nodes."""
+"""Optional mihomo/Clash controller helper. Does not change proxies unless 'switch' is requested."""
+import argparse
 import json
-import sys
-
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-
 import os
+import sys
+import urllib.error
+import urllib.request
+from urllib.parse import quote, urlsplit
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, OSError):
+    pass
 
 
-def http_over_pipe(method, path, secret=None, body=None):
-    secret = secret or os.environ.get("CLASH_SECRET", "set-your-secret")
-    handle = open(r"\\.\pipe\verge-mihomo", "r+b", buffering=0)
+def controller_request(method, path, body=None):
+    base = os.environ.get('CLASH_API', 'http://127.0.0.1:9090').rstrip('/')
+    parsed = urlsplit(base)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('CLASH_API must be an HTTP(S) controller URL without credentials.')
+    secret = os.environ.get('CLASH_SECRET')
+    headers = {'Content-Type': 'application/json'}
+    if secret:
+        headers['Authorization'] = f'Bearer {secret}'
+    payload = json.dumps(body, ensure_ascii=False).encode('utf-8') if body is not None else None
+    req = urllib.request.Request(base + path, data=payload, headers=headers, method=method)
+    # Controller calls must not go through the traffic proxy being changed.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        payload = body.encode() if body else b""
-        headers = (
-            f"{method} {path} HTTP/1.1\r\n"
-            f"Host: mihomo\r\n"
-            f"Authorization: Bearer {secret}\r\n"
-            f"Content-Length: {len(payload)}\r\n"
-            f"Connection: close\r\n\r\n"
-        ).encode()
-        handle.write(headers + payload)
-        chunks = []
-        while True:
-            try:
-                chunk = handle.read(65536)
-            except OSError:
-                break
-            if not chunk:
-                break
-            chunks.append(chunk)
-        raw = b"".join(chunks)
-    finally:
-        handle.close()
-    head, _, body_raw = raw.partition(b"\r\n\r\n")
-    status_line = head.split(b"\r\n")[0].decode(errors="replace")
-    # handle chunked encoding minimally: try json parse of stripped body
-    text = body_raw.decode(errors="replace")
-    if "chunked" in head.decode(errors="replace").lower():
-        # de-chunk
-        out, pos = [], 0
-        while pos < len(text):
-            nl = text.find("\r\n", pos)
-            if nl < 0:
-                break
-            try:
-                size = int(text[pos:nl], 16)
-            except ValueError:
-                break
-            if size == 0:
-                break
-            out.append(text[nl + 2:nl + 2 + size])
-            pos = nl + 2 + size + 2
-        text = "".join(out)
-    return status_line, text
+        with opener.open(req, timeout=10) as response:
+            raw = response.read()
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError('Controller authentication failed; set CLASH_SECRET.') from exc
+        raise RuntimeError(f'Controller returned HTTP {exc.code}; check group/node names.') from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError('Cannot connect to controller. Enable external-controller and set CLASH_API, or switch nodes manually in your proxy app.') from exc
 
 
-def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
-    if cmd == "list":
-        status, text = http_over_pipe("GET", "/proxies")
-        print("status:", status)
-        data, _ = json.JSONDecoder().raw_decode(text.lstrip())
-        data = data.get("proxies", {})
-        for name, info in data.items():
-            if info.get("type") in ("Selector", "URLTest", "Fallback"):
-                now = info.get("now", "")
-                all_nodes = info.get("all", [])
-                us = [n for n in all_nodes if any(
-                    k in n.upper() for k in ("US", "UNITED STATES", "美国", "美國"))]
-                print(f"[{info['type']}] {name} | now={now} | nodes={len(all_nodes)}"
-                      + (f" | US候选: {us}" if us else ""))
-    elif cmd == "switch":
-        group, node = sys.argv[2], sys.argv[3]
-        status, text = http_over_pipe("PUT", f"/proxies/{group}",
-                                      body=json.dumps({"name": node}))
-        print("switch status:", status, text[:200])
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Optional Clash/mihomo HTTP controller helper')
+    sub = parser.add_subparsers(dest='cmd', required=True)
+    sub.add_parser('list')
+    switch = sub.add_parser('switch')
+    switch.add_argument('group')
+    switch.add_argument('node')
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == 'list':
+            proxies = controller_request('GET', '/proxies').get('proxies', {})
+            for name, info in proxies.items():
+                if info.get('type') in ('Selector', 'URLTest', 'Fallback'):
+                    print(f'[{info["type"]}] {name} | now={info.get("now", "")} | nodes={info.get("all", [])}')
+        else:
+            controller_request('PUT', '/proxies/' + quote(args.group, safe=''), {'name': args.node})
+            selected = controller_request('GET', '/proxies/' + quote(args.group, safe=''))
+            if selected.get('now') != args.node:
+                raise RuntimeError('Controller did not confirm requested node; inspect the proxy app.')
+            print(f'Switched {args.group} -> {args.node}')
+        return 0
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f'[error] {exc}', file=sys.stderr)
+        return 2
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    sys.exit(main())

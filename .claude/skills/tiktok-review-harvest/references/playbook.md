@@ -1,52 +1,74 @@
-# 方法论：为什么这套流程能绕开风控（已验证两个商品 100% 全量）
+# 实现说明与完整性校验
 
-## 三层障碍与解法
+这是当前脚本的接口记录，不是 TikTok 对接口稳定性的保证。过去商品的成功结果
+不能推断到其他机器、站点或未来页面；遇到接口变化必须停止并检查响应。
 
-### 1. 网络层：IP 决定生死
-- TikTok 直连不通（TLS 握手被重置），必须走代理
-- **区域一致性**：`/us/` 商品页用非美国 IP 访问 → 服务端直接弹 Security Check 或重定向到当地商城首页。URL 区域 ↔ 出口 IP 国家必须一致
-- 数据中心 IP（机房 VPN）风控评分差；**住宅 IP（家宽）最宽松**。Clash 订阅里带「家宽/ISP」字样的节点优先
+## 网络与浏览器
 
-### 2. 浏览器层：自动化指纹检测
-- Playwright 启动的 Chromium（无论 headless/headed）→ 必弹滑块。TikTok 检测 `navigator.webdriver` + CDP 自动化标志 + 浏览器指纹一致性
-- 解法：**独立启动真实 Edge**（`--remote-debugging-port`），Playwright 只做 CDP 附加（`connect_over_cdp`）。真实 Edge 的指纹是真用户指纹
-- 滑块兜底：真遇到滑块让人拖一次，cookie 持久化后不再触发
+出口区域应与商品 URL 区域一致。可使用本地 HTTP/mixed 代理或直连，
+不要求特定代理软件。预检和抓取检查出口国家；已有 CDP 会话时检查实际浏览器路由。
 
-### 3. 数据层：不要和前端加密硬碰硬
-- 前端翻页用加密参数 `X-Tts-Oec-Bsid`（每页不同），逆向 JS 生成逻辑成本极高
-- **关键发现**：评论接口本身是明文 POST，加密参数可以不带，`page_size` 官方用 3 但服务端接受 50
-- 在页面上下文用 `page.evaluate(fetch)` 发请求：自动带 cookie、同源无 CORS、指纹真实
+启动独立配置的 Edge/Chrome，通过 Playwright connect_over_cdp 附加，
+不使用 Playwright 自带浏览器，也不接管用户的日常 profile。
+CDP 仅适用于 Chromium 系浏览器，属于兼容性较低的连接方式，
+浏览器版本变化仍可能影响功能。[Playwright 官方说明](https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp)
 
-## API 规格（实测）
+验证码由用户手动完成，五分钟超时停止；保留 cookie 不代表以后不会再验证。
 
-```
-POST https://shop.tiktok.com/api/shop/pdp_desktop/get_product_reviews
-Content-Type: application/json
+## 当前评论接口
 
-{
-  "product_id": "1729483763488494309",   // 商品ID（从 /pdp/<slug>/<id>/ URL 提取）
-  "page_start": 1,                        // 1 基页码
-  "page_size": 50,                        // 官方 3，实测上限 ≥50
-  "sort_rule": 1,                         // 1=推荐排序
-  "review_filter": {"filter_type": 1, "filter_value": 6},
-                                          // filter_value: 6=全部, 1~5=对应星级
-  "component_name": "pdp_left_reviews"    // 桌面端 PDP 固定值
-}
-```
+同源 POST /api/shop/pdp_desktop/get_product_reviews：
 
-响应 `data`：
-- `product_reviews[]`: review_id, review_rating(1-5), review_text, review_images[], display_image_url, reviewer_name, reviewer_avatar_url, review_time(毫秒), is_verified_purchase, is_incentivized_review, sku_specification, review_country, product_name
-- `has_more`, `total_reviews`
-- `review_ratings`: {review_count, overall_score, rating_result: {"5": n, ...}}
+    {
+      "product_id": "<商品ID>",
+      "page_start": 1,
+      "page_size": 50,
+      "sort_rule": 1,
+      "review_filter": {"filter_type": 1, "filter_value": 6},
+      "component_name": "pdp_left_reviews"
+    }
 
-## 防限流策略（v2，必开）
-1. 请求间隔 1.5s
-2. 失败退避 5/10/20/40s 重试
-3. **星级分区抓取**：全量(6)抓完后按 5→1 各再抓一轮合并去重——单区数据量小不易触顶，且可用 API 返回的各星总数交叉校验完整性
-4. 终止条件：`has_more=false` 或连续两页无新数据
-5. **code=100000 快速熔断**：连续两次 100000 → 判定会话/IP 被限流，立即终止（10-30 分钟后重试），不做无谓退避。此错误码无 message，是风控/限流的通用签名
-6. **SSR 兜底合并**：PDP HTML 内嵌少量评论（~3 条），每次抓取自动解析合并，限流期也保底有数据
+filter_value=6 为全部，1..5 为对应星级；参数来自原有商品实测，平台可能修改。
+返回 data 包含 product_reviews、has_more、total_reviews、review_ratings。
+评论以 review_id 去重；不会因重复页直接宣称抓取完整。
 
-## 完整性校验
-- `harvested_count` vs `total_reviews_claimed`（≥99% 即正常，缺口多为跨页去重的重复ID）
-- 每星抓取数 vs `star_filter_totals`
+## 请求与终止
+
+- 全部评论后再按 5..1 星补抓，正常请求之间至少间隔 1.5 秒。
+- 单请求失败等待 5/10/20 秒，最多四次尝试。
+- 连续两次 code=100000，或 HTTP 401/403/429：停止全部星级请求。
+- has_more=true 但空页，或连续两页没有新增评论：停止并标记部分数据。
+- 响应结构变化：停止，保留已抓到的数据。
+- 从已验证商品 PDP 的 HTML 中合并 SSR 内嵌评论；可能没有此数据。
+- 站点重定向、商品 ID 不符或验证超时：不调用评论接口。
+
+100000 的具体原因不应只凭错误码判断，更不能推断为全球故障；
+查看页面状态、HTTP 状态和响应，等待后再决定是否重试。
+不承诺固定解封时间。
+
+## 结果契约
+
+JSON 的 status：
+- complete：未中途失败；总数、五个星级分区数与去重后的数据逐项相等。
+- partial：中途停止，或数量低于平台声明。
+- unknown：总数不可用、分区缺失或数量不一致，无法确认完整。
+
+这是针对抓取时平台声明数量的核对，评论动态变化时可能得到 unknown。
+报表只按已抓到的样本统计，明显显示 partial/unknown 警告。
+旧 JSON 无 status 时按 unknown 处理。未抓到数据返回码 3，不生成空报表。
+
+## 可选代理控制器
+
+clash_pipe.py 保留旧文件名，但现在调用可配置的 mihomo HTTP 控制器。
+GET /proxies 列节点，PUT /proxies/<编码分组名> 切节点，然后读取 now 确认。
+CLASH_API 与 CLASH_SECRET 由目标机器配置；无控制器时可手动切换代理。
+[官方控制器接口](https://wiki.metacubex.one/api/)
+
+## 本地验证
+
+在项目根目录运行：
+
+    python -X utf8 -m unittest discover -s tests -v
+
+测试使用模拟网页、临时目录和本地 HTTP 控制器，不访问 TikTok 或切换真实代理。
+全新机器仍应按 INSTALL.md 完成安装与目标商品预检。
