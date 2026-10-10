@@ -24,7 +24,8 @@ __pycache__/
 venv/
 
 # ===== 其他 =====
-~$*.xlsx        # Excel 打开时的锁文件
+# Excel 打开时的锁文件（注意：gitignore 不支持行内注释，需独立一行）
+~$*.xlsx
 *.tmp
 *.log
 node_modules/
@@ -34,3 +35,26 @@ output/
 
 # Clean skill distribution packages and validation records
 dist/
+
+# ===== AI 客户端配置（AIOS 安装的本机工具链，不入库）=====
+.agents/
+.codex/
+.gemini/
+.grok/
+.hermes/
+.opencode/
+.pi/
+.qoder/
+.workbuddy/
+.zcode/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+opencode.json
+scripts/lib/
+
+# .claude/ 只保留本项目 skill（tiktok-review-harvest），其余本机配置忽略
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/tiktok-review-harvest/
