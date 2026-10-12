@@ -8,6 +8,8 @@ tests/
 # ===== 运行产物（体积大、可重新生成）=====
 # 探针/抓取原始产物：截图、页面HTML、原始响应JSON
 probe/
+# graphify 知识图谱输出（HTML/JSON/报告，可用 /graphify 重新生成）
+graphify-out/
 # 生成的报告（同事各自生成）
 report/*.xlsx
 # 抓取数据存档（按商品ID，可重新抓）

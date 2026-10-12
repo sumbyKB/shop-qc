@@ -17,6 +17,12 @@ CDP 仅适用于 Chromium 系浏览器，属于兼容性较低的连接方式，
 
 ## 当前评论接口
 
+支持 shop.tiktok.com 区域 PDP 和 shop-id.tokopedia.com 印尼 PDP。
+Tokopedia 域名自动映射 id；同源 fetch 跟随实际页面域名，不向其他主机重放。
+2026-10-12 目标商品页面实际可读到 review_info/product_reviews/review_ratings，
+结构与已有模型一致；实时翻页测试遇到 Security Check，因此不能据此宣称接口已验证或全量可用。
+页面声明数量随抓取时间变化，不将实测数固定写入抓取逻辑。
+
 同源 POST /api/shop/pdp_desktop/get_product_reviews：
 
     {
@@ -40,6 +46,8 @@ filter_value=6 为全部，1..5 为对应星级；参数来自原有商品实测
 - has_more=true 但空页，或连续两页没有新增评论：停止并标记部分数据。
 - 响应结构变化：停止，保留已抓到的数据。
 - 从已验证商品 PDP 的 HTML 中合并 SSR 内嵌评论；可能没有此数据。
+- 内嵌 review_info 的汇总评分只在其评论绑定目标 product_id 时使用，排除推荐商品数据。
+- HTTP 404/405 时立即停止，不对未知接口连续重试。
 - 站点重定向、商品 ID 不符或验证超时：不调用评论接口。
 
 100000 的具体原因不应只凭错误码判断，更不能推断为全球故障；

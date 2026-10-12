@@ -16,7 +16,7 @@
 ### 1. 网络层 — 必须美国出口 IP
 - TikTok 直连不通（超时），走本机 Clash Verge 混合端口 `127.0.0.1:7897`
 - 美国站 PDP 用非美国 IP 会被地理重定向到泰国站商城首页
-- 切节点：Clash HTTP 控制端口没开，走**命名管道** `\\.\pipe\verge-mihomo`（REST，secret=`set-your-secret`，脚本 `scripts/clash_pipe.py`）
+- 切节点：skill 打包版 `clash_pipe.py` 走 **HTTP external-controller**（环境变量 `CLASH_API`，默认 `http://127.0.0.1:9090`；`CLASH_SECRET` 可选 Bearer 认证；子命令 `list` / `switch <组> <节点>`；控制器请求绕过流量代理）。`scripts/` 老版本是命名管道 `\\.\pipe\verge-mihomo`（`http_over_pipe`，secret=`set-your-secret`），仅作 legacy 备用
 - 选「🇺🇸 美国-家宽」住宅节点，风控最宽松；GLOBAL 组切换，用完可切回（用户可要求不切）
 
 ### 2. 浏览器层 — 真实 Edge + CDP 附加
@@ -69,7 +69,7 @@ python scripts/build_excel.py <reviews_json> <输出xlsx>   # 报告 → report/
 |---|---|
 | `harvest_reviews.py` | v2 抓取器：星级分区+耐心退避+按商品存档 |
 | `build_excel.py` | 参数化 Excel 报告生成（KPI/图表/差评分析/明细） |
-| `clash_pipe.py` | Clash 命名管道切节点（list/switch） |
+| `clash_pipe.py` | Clash 切节点（list/switch；skill 版走 HTTP external-controller，scripts 老版走命名管道） |
 | `cdp_capture.py` | 启动真实 Edge（9333 端口）+ 附加 |
 | `api_replay_test.py` | API 重放连通性测试 |
 

@@ -47,17 +47,24 @@ def product_url(value, region=None):
     value = value.strip()
     pid = extract_product_id(value)
     if not pid:
-        raise ValueError('Use a full https://shop.tiktok.com/<region>/pdp/.../<product_id> URL or numeric product ID; short links are unsupported.')
+        raise ValueError('Use a full shop.tiktok.com regional PDP or shop-id.tokopedia.com PDP URL, or numeric product ID; short links are unsupported.')
     if re.fullmatch(r'\d{10,25}', value):
         region = region or 'us'
         if region not in REGION_CC:
             raise ValueError('Unsupported region.')
+        if region == 'id':
+            return pid, region, f'https://shop-id.tokopedia.com/pdp/{pid}'
         return pid, region, f'https://shop.tiktok.com/{region}/pdp/{pid}'
     parsed = urlsplit(value)
     match = re.match(r'^/([a-z]{2})/pdp/', parsed.path)
-    if parsed.scheme != 'https' or parsed.netloc != 'shop.tiktok.com' or not match:
-        raise ValueError('Only full HTTPS shop.tiktok.com regional PDP URLs are supported.')
-    actual_region = match.group(1)
+    if parsed.scheme != 'https':
+        raise ValueError('Product URL must use HTTPS.')
+    if parsed.netloc == 'shop-id.tokopedia.com' and parsed.path.startswith('/pdp/'):
+        actual_region = 'id'
+    elif parsed.netloc == 'shop.tiktok.com' and match:
+        actual_region = match.group(1)
+    else:
+        raise ValueError('Supported PDP hosts are shop.tiktok.com and shop-id.tokopedia.com (Indonesia).')
     if actual_region not in REGION_CC:
         raise ValueError(f'Unsupported region: {actual_region}')
     if region and REGION_CC[region] != REGION_CC[actual_region]:
@@ -126,22 +133,39 @@ def get_pdp_page(ctx, url, captcha_timeout=300):
     return page
 
 
-def extract_ssr_reviews(html):
+def extract_embedded_values(html, key):
     out, pos = [], 0
     decoder = json.JSONDecoder()
+    marker = json.dumps(key) + ':'
     while True:
-        index = html.find('"product_reviews":', pos)
+        index = html.find(marker, pos)
         if index < 0:
             return out
-        start = index + len('"product_reviews":')
+        start = index + len(marker)
         tail = html[start:].lstrip()
         try:
             values, consumed = decoder.raw_decode(tail)
-            if isinstance(values, list):
-                out.extend(values)
+            out.append(values)
             pos = start + len(html[start:]) - len(tail) + consumed
         except ValueError:
             pos = start
+
+
+def extract_ssr_reviews(html):
+    return [review for values in extract_embedded_values(html, 'product_reviews')
+            if isinstance(values, list) for review in values]
+
+
+def extract_ssr_ratings(html, pid):
+    # Bind aggregate metadata to the requested product, not a shop/recommendation rating.
+    for info in extract_embedded_values(html, 'review_info'):
+        if not isinstance(info, dict):
+            continue
+        items = info.get('product_reviews')
+        if (isinstance(items, list) and any(isinstance(item, dict) and str(item.get('product_id')) == pid for item in items)
+                and isinstance(info.get('review_ratings'), dict)):
+            return info['review_ratings']
+    return None
 
 
 class HarvestStopped(RuntimeError):
@@ -153,7 +177,7 @@ def fetch_page(page, body, errors, sleep=time.sleep):
     for attempt in range(len(BACKOFFS) + 1):
         try:
             response = page.evaluate(FETCH, body)
-            if response['status'] in (401, 403, 429):
+            if response['status'] in (401, 403, 404, 405, 429):
                 raise HarvestStopped(f'HTTP {response["status"]}: stopped; check challenge/login or wait before retrying.')
             data = json.loads(response['text'])
             if response['status'] == 200 and data.get('code') == 0 and isinstance(data.get('data'), dict):
@@ -229,8 +253,12 @@ def collect_reviews(page, pid, page_size, sleep=time.sleep):
         errors.append(stopped)
         print(f'[stopped] {stopped}', flush=True)
     try:
-        for review in extract_ssr_reviews(page.content()):
-            if isinstance(review, dict) and review.get('review_id'):
+        html = page.content()
+        if ratings is None:
+            ratings = extract_ssr_ratings(html, pid)
+        for review in extract_ssr_reviews(html):
+            if (isinstance(review, dict) and review.get('review_id')
+                    and (review.get('product_id') is None or str(review['product_id']) == pid)):
                 reviews.setdefault(str(review['review_id']), review)
     except Exception as exc:
         errors.append(f'SSR merge failed: {type(exc).__name__}')

@@ -2,7 +2,7 @@
 name: tiktok-review-harvest
 description: >-
   抓取 TikTok Shop 商品公开评论并生成 Excel 样本分析报告。
-  用户给出完整 shop.tiktok.com 区域商品链接或商品 ID，要求抓评论、差评分析或评论报告时使用。
+  用户给出完整 shop.tiktok.com 区域商品链接、shop-id.tokopedia.com 印尼商品链接或商品 ID，要求抓评论、差评分析或评论报告时使用。
   不用于达人邀约、账号分析、店铺管理或其他网站评论。
 ---
 
@@ -51,7 +51,9 @@ Windows 为 .venv/Scripts/python.exe，macOS/Linux 为 .venv/bin/python；
        <python> "<skill>/scripts/tiktok_reviews.py" all "<商品URL或ID>" --out "<工作目录>/output"
 
    仅 ID 默认美国站；其他区域须加 --region th 等参数。
-   支持完整 https://shop.tiktok.com/<region>/pdp/.../<id> 链接，不支持短链。
+   支持完整 https://shop.tiktok.com/<region>/pdp/.../<id> 和 https://shop-id.tokopedia.com/pdp/.../<id> 链接，不支持短链。
+   Tokopedia 此域名自动识别为印尼站（id），须匹配 ID 出口；只提供 ID 并指定 --region id 时使用该域名。
+   页面允许在这两个已支持域名间跳转，但区域和商品 ID 必须一致。
    抓取器启动独立用户配置的真实浏览器，然后通过 CDP 附加；不使用日常浏览器配置。
    若出现 Security Check，告知用户手动完成，最多等 5 分钟；超时停止。
    不自动处理验证码、不绕登录或付费墙。
@@ -66,6 +68,8 @@ Windows 为 .venv/Scripts/python.exe，macOS/Linux 为 .venv/bin/python；
 
    连续两次 code=100000，或 HTTP 401/403/429 时停止全部星级请求。
    保留部分 JSON，等待后再由用户决定是否重试；不要承诺固定时间自动解封。
+   HTTP 404/405 表示当前接口不可用，立即停止，不重复调用不支持的接口。
+   接口失败时可合并目标商品页面内嵌的评论、评分与总数，但不得把它们描述为完整翻页成功。
    已有 JSON/默认报表保留，新运行加时间后缀。显式 --xlsx 路径可覆盖该文件。
 
 ## 输出与配置

@@ -2,6 +2,7 @@
 
 安装这个 skill 后，直接把 TikTok Shop 商品链接发给 Codex 或 Claude Code，
 即可抓取公开评论并生成 Excel 分析报告。
+也支持印尼站 `shop-id.tokopedia.com/pdp/.../<商品ID>` 链接，自动识别印尼区域。
 
 ## 从 GitHub 安装
 
@@ -25,6 +26,7 @@ Codex 也可通过 $tiktok-review-harvest 显式调用。
 然后检查浏览器和网络，再开始抓取。
 
 电脑需要已有 Python 3.10+、Edge 或 Chrome，以及能访问目标区域的网络。
+印尼 Tokopedia 链接需要印尼出口；验证码或限流仍可能阻止评论翻页。
 若缺少这些条件，AI 会说明需要补齐什么；出现验证码时需要你在浏览器中手动完成。
 
 ## 会得到什么
